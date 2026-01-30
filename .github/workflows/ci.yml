@@ -1,10 +1,11 @@
-name: Simple CI
+name: Java CI with PostgreSQL
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:  # Ручной запуск
 
 jobs:
   test:
@@ -26,18 +27,30 @@ jobs:
           - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
       
-    - name: Set up JDK 17
+    - name: Setup Java
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: maven
         
-    - name: Build and test
-      run: mvn clean test -B
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: maven-${{ hashFiles('pom.xml') }}
+        restore-keys: |
+          maven-
+          
+    - name: Build project
+      run: mvn clean compile -B
+      
+    - name: Run tests
+      run: mvn test -B
       env:
         SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/shop_test
         SPRING_DATASOURCE_USERNAME: postgres
         SPRING_DATASOURCE_PASSWORD: testpassword
+        SPRING_JPA_HIBERNATE_DDL_AUTO: create-drop

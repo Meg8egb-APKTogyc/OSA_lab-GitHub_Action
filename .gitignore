@@ -43,3 +43,4 @@ temp/
 *.key
 .env
 .env.local
+trigger.txt
