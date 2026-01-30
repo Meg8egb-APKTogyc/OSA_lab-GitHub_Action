@@ -18,7 +18,6 @@ buildNumber.properties
 .classpath
 .project
 .settings/
-bin/
 *.swp
 *.swo
 
@@ -26,22 +25,21 @@ bin/
 .DS_Store
 Thumbs.db
 
-# Docker (но мы их коммитим для лабы!)
-# .dockerignore
-# docker-compose.yml
-# Dockerfile
+# Docker
+.dockerignore
+docker-compose.yml
+Dockerfile
 
-# Test reports
-test-output/
-surefire-reports/
-failsafe-reports/
-
-# GitHub Actions
-.actions/
-workflows/*.log
-
-# System
+# Logs
 *.log
 logs/
+
+# Temp
 tmp/
 temp/
+
+# CI/CD
+*.pem
+*.key
+.env
+.env.local
