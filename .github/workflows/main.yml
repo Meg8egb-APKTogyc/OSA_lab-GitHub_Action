@@ -1,0 +1,212 @@
+name: Main CI/CD Pipeline
+
+on:
+  # Автоматический запуск
+  push:
+    branches: [main, develop]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - '**/*.log'
+  pull_request:
+    branches: [main, develop]
+  # Ручной запуск
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  JAVA_VERSION: '17'
+  MAVEN_OPTS: '-Dhttp.keepAlive=false -Dmaven.wagon.http.pool=false'
+
+# Правила для разных событий
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1. Проверка кода и сборка
+  build:
+    name: Build and Code Quality
+    runs-on: ubuntu-latest
+    
+    outputs:
+      build_status: ${{ steps.build.outcome }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+ 
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Build application
+      id: build
+      run: mvn clean compile -B ${{ github.event.inputs.skip_tests && '-DskipTests' || '' }}
+
+    - name: Run Checkstyle
+      id: checkstyle
+      continue-on-error: true
+      run: mvn checkstyle:check -DskipTests
+
+    - name: Create build artifact
+      run: mvn package -DskipTests -B
+
+    - name: Upload JAR artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: shopapi-jar-${{ github.sha }}
+        path: target/*.jar
+        retention-days: 30
+        if-no-files-found: error
+
+  # 2. Тестирование с PostgreSQL
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: build
+    if: ${{ !github.event.inputs.skip_tests }}
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: shop_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Run tests with PostgreSQL
+      run: |
+        mvn test -B \
+          -Dspring.datasource.url=jdbc:postgresql://localhost:5432/shop_test \
+          -Dspring.datasource.username=test_user \
+          -Dspring.datasource.password=test_password \
+          -Dspring.jpa.hibernate.ddl-auto=create-drop
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ github.sha }}
+        path: |
+          target/surefire-reports/
+          target/failsafe-reports/
+        retention-days: 7
+
+    - name: Test Summary
+      if: always()
+      run: |
+        echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Tests executed with PostgreSQL" >> $GITHUB_STEP_SUMMARY
+        echo "📊 Results saved as artifacts" >> $GITHUB_STEP_SUMMARY
+
+  # 3. Заглушка деплоя (простая) + матрица
+  deploy-stub:
+    name: Deploy to ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    
+    strategy:
+      matrix:
+        environment: [dev, staging]
+        include:
+          - environment: dev
+            url: https://dev.shopapi.example.com
+          - environment: staging
+            url: https://staging.shopapi.example.com
+    
+    environment: ${{ matrix.environment }}
+    
+    steps:
+    - name: Download build artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: shopapi-jar-${{ github.sha }}
+        
+    - name: Simulate deployment to ${{ matrix.environment }}
+      run: |
+        echo "🚀 Starting deployment to ${{ matrix.environment }}..."
+        echo "📦 Application: ShopAPI"
+        echo "🔖 Version: ${{ github.sha }}"
+        echo "🌐 Target URL: ${{ matrix.url }}"
+        echo ""
+        echo "Simulating deployment steps:"
+        echo "1. Validating deployment package... ✅"
+        echo "2. Checking environment health... ✅"
+        echo "3. Deploying application... ✅"
+        echo "4. Running health checks... ✅"
+        echo ""
+        echo "✅ Deployment simulation completed!"
+        
+    - name: Create deployment summary
+      run: |
+        echo "## Deployment to ${{ matrix.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Environment | ${{ matrix.environment }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Target URL | ${{ matrix.url }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Status | ✅ Simulation Successful |" >> $GITHUB_STEP_SUMMARY
+        echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+
+  # 4. Финальный отчет
+  report:
+    name: Generate Report
+    runs-on: ubuntu-latest
+    needs: [build, test, deploy-stub]
+    if: always()
+
+    steps:
+    - name: Create workflow summary
+      run: |
+        echo "## Workflow Execution Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Jobs Status:" >> $GITHUB_STEP_SUMMARY
+        echo "- Build: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Test: ${{ needs.test.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Deploy: ${{ needs.deploy-stub.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Artifacts Generated:" >> $GITHUB_STEP_SUMMARY
+        echo "1. JAR file (shopapi-jar-${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
+        echo "2. Test results (test-results-${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload final report
+      uses: actions/upload-artifact@v4
+      with:
+        name: workflow-report-${{ github.run_id }}
+        path: ${{ github.step_summary }}
+        retention-days: 90
