@@ -2,9 +2,14 @@ name: Telegram Notifications
 
 on:
   workflow_run:
-    workflows: ["Main CI/CD Pipeline", "Build and Package"]
+    workflows:
+      - "Main CI/CD Pipeline"
+      - "Java CI with PostgreSQL"
+      - "Build and Package"
+      - "Scheduled Security Checks"
     types:
       - completed
+    branches: [master]
 
 jobs:
   notify:
@@ -13,41 +18,30 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion != 'skipped' }}
     
     steps:
-    - name: Send success notification
-      if: github.event.workflow_run.conclusion == 'success'
-      uses: appleboy/telegram-action@master
-      env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      with:
-        to: ${{ env.TELEGRAM_CHAT_ID }}
-        token: ${{ env.TELEGRAM_TOKEN }}
-        message: |
-          ✅ *${{ github.event.workflow_run.name }} - SUCCESS*
-          
-          📁 Repository: ${{ github.repository }}
-          🌿 Branch: ${{ github.event.workflow_run.head_branch }}
-          🔗 Run: ${{ github.event.workflow_run.html_url }}
-          ⏱️ Duration: ${{ github.event.workflow_run.run_duration }}s
-          
-          🎉 All checks passed successfully!
-        format: markdown
+    - name: Extract workflow info
+      id: workflow-info
+      run: |
+        echo "workflow_name=${{ github.event.workflow_run.name }}" >> $GITHUB_OUTPUT
+        echo "workflow_url=${{ github.event.workflow_run.html_url }}" >> $GITHUB_OUTPUT
+        echo "branch=${{ github.event.workflow_run.head_branch }}" >> $GITHUB_OUTPUT
+        echo "status=${{ github.event.workflow_run.conclusion }}" >> $GITHUB_OUTPUT
+        echo "actor=${{ github.event.workflow_run.actor.login }}" >> $GITHUB_OUTPUT
         
-    - name: Send failure notification
-      if: github.event.workflow_run.conclusion == 'failure'
+    - name: Send Telegram message
       uses: appleboy/telegram-action@master
-      env:
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       with:
-        to: ${{ env.TELEGRAM_CHAT_ID }}
-        token: ${{ env.TELEGRAM_TOKEN }}
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_TOKEN }}
         message: |
-          ❌ *${{ github.event.workflow_run.name }} - FAILED*
+          ${{ steps.workflow-info.outputs.status == 'success' && '✅' || '❌' }} *${{ steps.workflow-info.outputs.workflow_name }} - ${{ steps.workflow-info.outputs.status }}*
           
-          📁 Repository: ${{ github.repository }}
-          🌿 Branch: ${{ github.event.workflow_run.head_branch }}
-          🔗 Run: ${{ github.event.workflow_run.html_url }}
+          📁 *Repository:* ${{ github.repository }}
+          👤 *Triggered by:* ${{ steps.workflow-info.outputs.actor }}
+          🌿 *Branch:* ${{ steps.workflow-info.outputs.branch }}
+          🔗 *View run:* ${{ steps.workflow-info.outputs.workflow_url }}
           
-          ⚠️ Some checks failed. Please review the workflow run.
+          ${{ steps.workflow-info.outputs.status == 'success' && '🎉 Все проверки пройдены успешно!' || '⚠️ Есть проблемы, требуется проверка!' }}
+          
+          _Сообщение отправлено автоматически из GitHub Actions_
         format: markdown
+        disable_web_page_preview: true
